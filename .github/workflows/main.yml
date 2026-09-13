@@ -1,0 +1,47 @@
+name: Daily Social Media Automation
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Runs daily at 08:00 UTC (Modify as per your timezone needs)
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Crucial: Allows the bot to commit file changes back to the repo
+      
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Dependencies (FFmpeg for yt-dlp)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
+        run: pip install requests yt-dlp
+
+      - name: Run Python Automation Script
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          TELEGRAM_TOKEN_SUCCESS: ${{ secrets.TELEGRAM_TOKEN_SUCCESS }}
+          TELEGRAM_TOKEN_FAIL: ${{ secrets.TELEGRAM_TOKEN_FAIL }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Commit File Changes (Tracking & Cooldowns)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Add the tracking and cooling files
+          git add link.txt history.txt save.txt history.json
+          
+          # Commit and push if there are changes
+          git commit -m "chore: Update history.json, url tracking, and save files [skip ci]" || echo "No changes to commit"
+          git push
