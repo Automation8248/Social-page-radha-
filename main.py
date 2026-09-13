@@ -71,38 +71,34 @@ def update_cooldown(item, item_type):
         json.dump(cooldowns, f, indent=4)
 
 def fetch_pinterest_api(search_term):
-    """Fetches the exact API URL requested by the user dynamically."""
-    # Yahan exactly aapka diya hua API hit ho raha hai
+    """Parses the nested JSON structure to extract the direct image or video URL."""
     api_url = f"https://ansh-apis.is-dev.org/api/printrest?key=ansh&search={search_term}"
     try:
         response = requests.get(api_url)
         data = response.json()
         
-        def extract_and_check(item):
-            if isinstance(item, dict):
-                url = item.get('url') or item.get('video_url') or item.get('download_url') or item.get('image_url')
-                if url and not check_history(url):
-                    return url
-            elif isinstance(item, str) and item.startswith("http"):
-                if not check_history(item):
-                    return item
-            return None
-
-        # Handle API returning a list of items
-        if isinstance(data, list):
-            for item in data:
-                url = extract_and_check(item)
-                if url: return url
-                
-        # Handle API returning a dictionary
-        elif isinstance(data, dict):
-            for key, value in data.items():
-                if isinstance(value, list):
-                    for item in value:
-                        url = extract_and_check(item)
-                        if url: return url
-            return extract_and_check(data)
+        # Navigate through the specific JSON structure provided
+        pins = data.get("data", {}).get("pins", [])
+        
+        for pin in pins:
+            media_url = None
             
+            # Extract Image URL
+            if pin.get("media_type") == "image":
+                images = pin.get("images", {})
+                media_url = images.get("orig", {}).get("url") or images.get("736x", {}).get("url")
+            
+            # Extract Video URL
+            elif pin.get("media_type") == "video":
+                formats = pin.get("video", {}).get("formats", [])
+                if formats:
+                    media_url = formats[0].get("url")
+                    
+            # Check history before returning
+            if media_url and media_url.startswith("http"):
+                if not check_history(media_url):
+                    return media_url
+                    
     except Exception as e:
         print(f"API Fetch Error: {e}")
     return None
@@ -110,27 +106,17 @@ def fetch_pinterest_api(search_term):
 def get_headers():
     return {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-def upload_to_servers(video_path):
-    filename = os.path.basename(video_path)
+def upload_to_servers(file_path):
+    filename = os.path.basename(file_path)
     servers = [
-        ("Catbox", lambda: requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Litterbox", lambda: requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data={'reqtype': 'fileupload', 'time': '72h'}, files={'fileToUpload': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("0x0.st", lambda: requests.post("https://0x0.st", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Uguu", lambda: requests.post("https://uguu.se/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("qu.ax", lambda: requests.post("https://qu.ax/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Pixeldrain", lambda: requests.post("https://pixeldrain.com/api/file", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Fileditch", lambda: requests.post("https://up1.fileditch.com/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Oshi.at", lambda: requests.post("https://oshi.at", files={'f': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("hostb.org", lambda: requests.post("https://hostb.org/api/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Buzzheavier", lambda: requests.put(f"https://buzzheavier.com/{filename}", data=open(video_path, 'rb'), headers=get_headers(), timeout=60)),
-        ("FilePort", lambda: requests.post("https://fileport.io/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("FileShot", lambda: requests.post("https://fileshot.net/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("FileMirage", lambda: requests.post("https://filemirage.com/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("JuiceBox", lambda: requests.post("https://juicebox.cc/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("storage.to", lambda: requests.post("https://storage.to/api/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("UploadFiles.io", lambda: requests.post("https://upfast.io/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Streamable", lambda: requests.post("https://api.streamable.com/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("Sendvid", lambda: requests.post("https://sendvid.com/api/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60))
+        ("Catbox", lambda: requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Litterbox", lambda: requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data={'reqtype': 'fileupload', 'time': '72h'}, files={'fileToUpload': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("0x0.st", lambda: requests.post("https://0x0.st", files={'file': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Uguu", lambda: requests.post("https://uguu.se/upload.php", files={'files[]': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("qu.ax", lambda: requests.post("https://qu.ax/upload.php", files={'files[]': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Pixeldrain", lambda: requests.post("https://pixeldrain.com/api/file", files={'file': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Fileditch", lambda: requests.post("https://up1.fileditch.com/upload.php", files={'files[]': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Oshi.at", lambda: requests.post("https://oshi.at", files={'f': open(file_path, 'rb')}, headers=get_headers(), timeout=60))
     ]
 
     for name, req_func in servers:
@@ -159,7 +145,7 @@ def upload_to_servers(video_path):
 def send_to_webhook(title, hashtag, uploaded_url):
     if not WEBHOOK_URL:
         return False
-    payload = {"title": title, "hashtag": hashtag, "video_url": uploaded_url}
+    payload = {"title": title, "hashtag": hashtag, "media_url": uploaded_url}
     try:
         response = requests.post(WEBHOOK_URL, json=payload)
         response.raise_for_status()
@@ -187,7 +173,6 @@ def main():
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
 
-    # Fetch URL directly via API
     print(f"Fetching from API using keyword: '{search_term}'...")
     target_url = fetch_pinterest_api(search_term)
 
@@ -196,17 +181,26 @@ def main():
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
         
-    # Download the Media
-    video_path = "media_download"
+    media_path_base = "media_download"
+    final_path = ""
+    
     try:
-        ydl_opts = {'outtmpl': video_path, 'format': 'best', 'quiet': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(target_url, download=True)
-            ext = info.get('ext', 'mp4')
-            final_path = f"{video_path}.{ext}"
-            os.rename(video_path, final_path)
+        # Check if URL is a direct image file to bypass yt-dlp
+        if target_url.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            ext = target_url.split(".")[-1]
+            final_path = f"{media_path_base}.{ext}"
+            img_data = requests.get(target_url).content
+            with open(final_path, 'wb') as handler:
+                handler.write(img_data)
+        else:
+            # Use yt-dlp for video streams / m3u8 files
+            ydl_opts = {'outtmpl': media_path_base, 'format': 'best', 'quiet': True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(target_url, download=True)
+                ext = info.get('ext', 'mp4')
+                final_path = f"{media_path_base}.{ext}"
+                os.rename(media_path_base, final_path)
             
-        # Upload to Fallback Servers
         uploaded_direct_url = upload_to_servers(final_path)
         
         if not uploaded_direct_url:
@@ -214,7 +208,6 @@ def main():
             send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
             return
             
-        # Send to Webhook
         success = send_to_webhook(title, hashtag, uploaded_direct_url)
         
         if success:
@@ -222,6 +215,7 @@ def main():
             update_cooldown(hashtag, "hashtags")
             update_cooldown(search_term, "searches")
             
+            # Save the successful URL to history tracking
             update_file_record(target_url, HISTORY_FILE)
             update_file_record(target_url, SAVE_FILE)
                 
@@ -240,7 +234,7 @@ def main():
             
     finally:
         for f in os.listdir("."):
-            if f.startswith(video_path):
+            if f.startswith(media_path_base):
                 os.remove(f)
 
 if __name__ == "__main__":
