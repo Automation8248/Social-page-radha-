@@ -8,12 +8,10 @@ import yt_dlp
 METADATA_DIR = "metadata"
 TITLE_FILE = os.path.join(METADATA_DIR, "title.txt")
 HASHTAG_FILE = os.path.join(METADATA_DIR, "hashtag.txt")
-SEARCH_FILE = os.path.join(METADATA_DIR, "search.txt") # New search keyword file
+SEARCH_FILE = os.path.join(METADATA_DIR, "search.txt") 
 
-# Cooldown tracking
+# Cooldown and Tracking Files
 COOLDOWN_FILE = "history.json" 
-
-LINK_FILE = "link.txt"
 HISTORY_FILE = "history.txt"
 SAVE_FILE = "save.txt"
 
@@ -27,23 +25,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 def init_files():
-    """Creates necessary folders and files if they do not exist."""
     os.makedirs(METADATA_DIR, exist_ok=True)
-    for file in [TITLE_FILE, HASHTAG_FILE, SEARCH_FILE, LINK_FILE, HISTORY_FILE, SAVE_FILE]:
+    for file in [TITLE_FILE, HASHTAG_FILE, SEARCH_FILE, HISTORY_FILE, SAVE_FILE]:
         if not os.path.exists(file):
             open(file, 'w', encoding='utf-8').close()
             
     if not os.path.exists(COOLDOWN_FILE):
         with open(COOLDOWN_FILE, 'w', encoding='utf-8') as f:
             json.dump({"titles": {}, "hashtags": {}, "searches": {}}, f)
-    else:
-        # Ensure 'searches' key exists for backward compatibility
-        with open(COOLDOWN_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if "searches" not in data:
-            data["searches"] = {}
-            with open(COOLDOWN_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4)
 
 def check_history(url):
     with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -52,14 +41,6 @@ def check_history(url):
 def update_file_record(url, file_path):
     with open(file_path, 'a', encoding='utf-8') as f:
         f.write(f"{url.strip()}\n")
-
-def remove_from_link_txt(url_to_remove):
-    with open(LINK_FILE, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-    with open(LINK_FILE, 'w', encoding='utf-8') as f:
-        for line in lines:
-            if line.strip() != url_to_remove:
-                f.write(line)
 
 def get_available_metadata(filepath, item_type):
     with open(COOLDOWN_FILE, 'r', encoding='utf-8') as f:
@@ -90,13 +71,39 @@ def update_cooldown(item, item_type):
         json.dump(cooldowns, f, indent=4)
 
 def fetch_pinterest_api(search_term):
-    """Fetches a URL using the dynamic search term."""
+    """Fetches API and automatically extracts the first unused direct link (ignores URLs already in history)."""
     api_url = f"https://ansh-apis.is-dev.org/api/printrest?key=ansh&search={search_term}"
     try:
         response = requests.get(api_url)
         data = response.json()
-        if isinstance(data, dict):
-            return data.get('url') or data.get('video_url') or data.get('download_url')
+        
+        def extract_and_check(item):
+            if isinstance(item, dict):
+                url = item.get('url') or item.get('video_url') or item.get('download_url') or item.get('image_url')
+                if url and not check_history(url):
+                    return url
+            elif isinstance(item, str) and item.startswith("http"):
+                if not check_history(item):
+                    return item
+            return None
+
+        # Handle API returning a list of items
+        if isinstance(data, list):
+            for item in data:
+                url = extract_and_check(item)
+                if url: return url
+                
+        # Handle API returning a dictionary
+        elif isinstance(data, dict):
+            # If the dictionary contains a nested list (e.g., {"results": [...]})
+            for key, value in data.items():
+                if isinstance(value, list):
+                    for item in value:
+                        url = extract_and_check(item)
+                        if url: return url
+            # Fallback to flat dictionary
+            return extract_and_check(data)
+            
     except Exception as e:
         print(f"API Fetch Error: {e}")
     return None
@@ -105,9 +112,7 @@ def get_headers():
     return {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 def upload_to_servers(video_path):
-    """Uploads the downloaded file to the first available server from the list."""
     filename = os.path.basename(video_path)
-    
     servers = [
         ("Catbox", lambda: requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
         ("Litterbox", lambda: requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data={'reqtype': 'fileupload', 'time': '72h'}, files={'fileToUpload': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
@@ -117,8 +122,16 @@ def upload_to_servers(video_path):
         ("Pixeldrain", lambda: requests.post("https://pixeldrain.com/api/file", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
         ("Fileditch", lambda: requests.post("https://up1.fileditch.com/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
         ("Oshi.at", lambda: requests.post("https://oshi.at", files={'f': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("hostb.org", lambda: requests.post("https://hostb.org/api/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Buzzheavier", lambda: requests.put(f"https://buzzheavier.com/{filename}", data=open(video_path, 'rb'), headers=get_headers(), timeout=60)),
         ("FilePort", lambda: requests.post("https://fileport.io/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
-        ("FileShot", lambda: requests.post("https://fileshot.net/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60))
+        ("FileShot", lambda: requests.post("https://fileshot.net/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("FileMirage", lambda: requests.post("https://filemirage.com/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("JuiceBox", lambda: requests.post("https://juicebox.cc/upload.php", files={'files[]': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("storage.to", lambda: requests.post("https://storage.to/api/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("UploadFiles.io", lambda: requests.post("https://upfast.io/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Streamable", lambda: requests.post("https://api.streamable.com/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60)),
+        ("Sendvid", lambda: requests.post("https://sendvid.com/api/upload", files={'file': open(video_path, 'rb')}, headers=get_headers(), timeout=60))
     ]
 
     for name, req_func in servers:
@@ -126,7 +139,6 @@ def upload_to_servers(video_path):
             print(f"Uploading to {name}...")
             response = req_func()
             if response.status_code in [200, 201]:
-                # Dynamic parsing based on server response types
                 try:
                     data = response.json()
                     if name == "Pixeldrain":
@@ -139,14 +151,13 @@ def upload_to_servers(video_path):
                     text = response.text.strip()
                     if text.startswith("http"):
                         return text
-            print(f"❌ {name} failed or returned unreadable format.")
+            print(f"❌ {name} failed.")
         except Exception as e:
             print(f"❌ Error with {name}: {e}")
             
     return None
 
 def send_to_webhook(title, hashtag, uploaded_url):
-    """Sends the newly generated server URL to the webhook."""
     if not WEBHOOK_URL:
         return False
     payload = {"title": title, "hashtag": hashtag, "video_url": uploaded_url}
@@ -172,76 +183,56 @@ def main():
     hashtag = get_available_metadata(HASHTAG_FILE, "hashtags")
     search_term = get_available_metadata(SEARCH_FILE, "searches")
     
-    if not title or not hashtag:
-        msg = "⚠️ **Automation Failed**\nAll titles/hashtags are currently on a 30-day cooldown."
+    if not title or not hashtag or not search_term:
+        msg = "⚠️ **Automation Failed**\nTitles, hashtags, or search keywords are currently exhausted (30-day cooldown)."
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
 
-    # 1. Determine Source URL
-    target_url = None
-    is_from_link_txt = False
-    
-    with open(LINK_FILE, 'r', encoding='utf-8') as f:
-        links = [line.strip() for line in f.readlines() if line.strip()]
-        
-    for link in links:
-        if not check_history(link):
-            target_url = link
-            is_from_link_txt = True
-            break
-            
-    if not target_url:
-        if not search_term:
-            msg = "⚠️ **Automation Failed**\n`link.txt` is empty and no valid search keywords are off cooldown in `search.txt`."
-            send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
-            return
-            
-        print(f"link.txt exhausted. Fetching from API using keyword: '{search_term}'...")
-        api_url = fetch_pinterest_api(search_term)
-        if api_url and not check_history(api_url):
-            target_url = api_url
+    # Fetch URL directly via API
+    print(f"Fetching from API using keyword: '{search_term}'...")
+    target_url = fetch_pinterest_api(search_term)
 
     if not target_url:
-        msg = "⚠️ **Automation Failed**\nNo valid source URL found to process."
+        msg = f"⚠️ **Automation Failed**\nNo valid or fresh media URL found for search term: '{search_term}'."
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
         
-    # 2. Download the Media
-    video_path = "video.mp4"
+    # Download the Media
+    video_path = "media_download"
     try:
-        ydl_opts = {'outtmpl': video_path, 'format': 'best', 'merge_output_format': 'mp4'}
+        ydl_opts = {'outtmpl': video_path, 'format': 'best', 'quiet': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
+            info = ydl.extract_info(target_url, download=True)
+            # Ensure correct file extension
+            ext = info.get('ext', 'mp4')
+            final_path = f"{video_path}.{ext}"
+            os.rename(video_path, final_path)
             
-        # 3. Upload to Fallback Servers
-        uploaded_direct_url = upload_to_servers(video_path)
+        # Upload to Fallback Servers
+        uploaded_direct_url = upload_to_servers(final_path)
         
         if not uploaded_direct_url:
             msg = f"❌ **Automation Failed**\nAll upload servers failed for original URL: {target_url}"
             send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
             return
             
-        # 4. Send to Webhook
+        # Send to Webhook
         success = send_to_webhook(title, hashtag, uploaded_direct_url)
         
         if success:
-            # Update cooldowns
+            # Update cooldowns and tracking files
             update_cooldown(title, "titles")
             update_cooldown(hashtag, "hashtags")
-            if not is_from_link_txt and search_term:
-                update_cooldown(search_term, "searches")
-                
+            update_cooldown(search_term, "searches")
+            
             update_file_record(target_url, HISTORY_FILE)
             update_file_record(target_url, SAVE_FILE)
-            
-            if is_from_link_txt:
-                remove_from_link_txt(target_url)
                 
             success_msg = (
                 f"🚀 **Automation: Webhook Poster**\n"
                 f"📝 **Title:** {title}\n"
                 f"🏷️ **Hashtags:** {hashtag}\n"
-                f"📥 **Source URL:** {target_url}\n"
+                f"📥 **API Keyword:** {search_term}\n"
                 f"🔗 **Uploaded URL:** {uploaded_direct_url}\n"
                 f"✅ **Status:** Delivered to Webhook!"
             )
@@ -251,8 +242,10 @@ def main():
             send_telegram_message(TELEGRAM_TOKEN_FAIL, fail_msg)
             
     finally:
-        if os.path.exists(video_path):
-            os.remove(video_path)
+        # Cleanup any downloaded files
+        for f in os.listdir("."):
+            if f.startswith(video_path):
+                os.remove(f)
 
 if __name__ == "__main__":
     main()
