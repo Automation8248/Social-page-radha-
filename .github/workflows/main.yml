@@ -2,14 +2,14 @@ name: Daily Social Media Automation
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Runs daily at 08:00 UTC (Modify as per your timezone needs)
-  workflow_dispatch: # Allows you to run it manually from the Actions tab
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial: Allows the bot to commit file changes back to the repo
+      contents: write
       
     steps:
       - name: Checkout Code
@@ -39,9 +39,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Add the tracking and cooling files
-          git add link.txt history.txt save.txt history.json
+          git add history.txt save.txt history.json
           
-          # Commit and push if there are changes
-          git commit -m "chore: Update history.json, url tracking, and save files [skip ci]" || echo "No changes to commit"
+          git commit -m "chore: Update tracking files [skip ci]" || echo "No changes to commit"
           git push
