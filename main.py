@@ -24,6 +24,10 @@ TELEGRAM_TOKEN_FAIL = os.environ.get("TELEGRAM_TOKEN_FAIL")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
+# Static Variables for Messaging
+AUTOMATION_NAME = "Social page Radha"
+SOCIAL_MEDIA_NAME = "Radha"
+
 def init_files():
     """Initializes required files and handles corrupt JSON automatically."""
     os.makedirs(METADATA_DIR, exist_ok=True)
@@ -31,7 +35,6 @@ def init_files():
         if not os.path.exists(file):
             open(file, 'w', encoding='utf-8').close()
             
-    # Safely initialize or reset history.json
     if not os.path.exists(COOLDOWN_FILE) or os.path.getsize(COOLDOWN_FILE) == 0:
         with open(COOLDOWN_FILE, 'w', encoding='utf-8') as f:
             json.dump({"titles": {}, "hashtags": {}, "searches": {}}, f)
@@ -98,18 +101,15 @@ def fetch_pinterest_api(search_term):
         for pin in pins:
             media_url = None
             
-            # Extract Image URL
             if pin.get("media_type") == "image":
                 images = pin.get("images", {})
                 media_url = images.get("orig", {}).get("url") or images.get("736x", {}).get("url")
             
-            # Extract Video URL
             elif pin.get("media_type") == "video":
                 formats = pin.get("video", {}).get("formats", [])
                 if formats:
                     media_url = formats[0].get("url")
                     
-            # Check history before returning
             if media_url and media_url.startswith("http"):
                 if not check_history(media_url):
                     return media_url
@@ -187,7 +187,12 @@ def main():
     search_term = get_available_metadata(SEARCH_FILE, "searches")
     
     if not title or not hashtag or not search_term:
-        msg = "⚠️ **Automation Failed**\nTitles, hashtags, or search keywords are currently exhausted (30-day cooldown)."
+        msg = (
+            f"⚠️ **Automation Failed**\n"
+            f"🤖 **Automation:** {AUTOMATION_NAME}\n"
+            f"📱 **Platform:** {SOCIAL_MEDIA_NAME}\n"
+            f"❗️ **Reason:** Titles, hashtags, or search keywords are currently exhausted (30-day cooldown)."
+        )
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
 
@@ -195,7 +200,12 @@ def main():
     target_url = fetch_pinterest_api(search_term)
 
     if not target_url:
-        msg = f"⚠️ **Automation Failed**\nNo valid or fresh media URL found for search term: '{search_term}'. All available media might be in history.txt."
+        msg = (
+            f"⚠️ **Automation Failed**\n"
+            f"🤖 **Automation:** {AUTOMATION_NAME}\n"
+            f"📱 **Platform:** {SOCIAL_MEDIA_NAME}\n"
+            f"❗️ **Reason:** No valid or fresh media URL found for search term: '{search_term}'. All available media might be in history.txt."
+        )
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
         
@@ -203,7 +213,6 @@ def main():
     final_path = ""
     
     try:
-        # Bypass yt-dlp for direct image links
         if target_url.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
             ext = target_url.split(".")[-1]
             final_path = f"{media_path_base}.{ext}"
@@ -211,7 +220,6 @@ def main():
             with open(final_path, 'wb') as handler:
                 handler.write(img_data)
         else:
-            # Use yt-dlp for video files
             ydl_opts = {'outtmpl': media_path_base, 'format': 'best', 'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=True)
@@ -222,24 +230,27 @@ def main():
         uploaded_direct_url = upload_to_servers(final_path)
         
         if not uploaded_direct_url:
-            msg = f"❌ **Automation Failed**\nAll upload servers failed for original URL: {target_url}"
+            msg = (
+                f"❌ **Automation Failed**\n"
+                f"🤖 **Automation:** {AUTOMATION_NAME}\n"
+                f"📱 **Platform:** {SOCIAL_MEDIA_NAME}\n"
+                f"❗️ **Reason:** All upload servers failed for original URL: {target_url}"
+            )
             send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
             return
             
         success = send_to_webhook(title, hashtag, uploaded_direct_url)
         
         if success:
-            # Update cooldown limits
             update_cooldown(title, "titles")
             update_cooldown(hashtag, "hashtags")
             update_cooldown(search_term, "searches")
             
-            # Permanently block the original media URL from being reused
             update_file_record(target_url, HISTORY_FILE)
             update_file_record(target_url, SAVE_FILE)
                 
             success_msg = (
-                f"🚀 **Automation: Webhook Poster**\n"
+                f"🚀 **Automation: {AUTOMATION_NAME}**\n"
                 f"📝 **Title:** {title}\n"
                 f"🏷️ **Hashtags:** {hashtag}\n"
                 f"📥 **API Keyword:** {search_term}\n"
@@ -248,11 +259,15 @@ def main():
             )
             send_telegram_message(TELEGRAM_TOKEN_SUCCESS, success_msg)
         else:
-            fail_msg = f"❌ **Automation Failed**\nFailed to post payload to Webhook."
-            send_telegram_message(TELEGRAM_TOKEN_FAIL, fail_msg)
+            msg = (
+                f"❌ **Automation Failed**\n"
+                f"🤖 **Automation:** {AUTOMATION_NAME}\n"
+                f"📱 **Platform:** {SOCIAL_MEDIA_NAME}\n"
+                f"❗️ **Reason:** Failed to post payload to Webhook."
+            )
+            send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
             
     finally:
-        # Safely cleanup downloaded artifacts
         for f in os.listdir("."):
             if f.startswith(media_path_base):
                 os.remove(f)
