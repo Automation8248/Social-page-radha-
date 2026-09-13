@@ -25,24 +25,39 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 def init_files():
+    """Initializes required files and handles corrupt JSON automatically."""
     os.makedirs(METADATA_DIR, exist_ok=True)
     for file in [TITLE_FILE, HASHTAG_FILE, SEARCH_FILE, HISTORY_FILE, SAVE_FILE]:
         if not os.path.exists(file):
             open(file, 'w', encoding='utf-8').close()
             
-    if not os.path.exists(COOLDOWN_FILE):
+    # Safely initialize or reset history.json
+    if not os.path.exists(COOLDOWN_FILE) or os.path.getsize(COOLDOWN_FILE) == 0:
         with open(COOLDOWN_FILE, 'w', encoding='utf-8') as f:
             json.dump({"titles": {}, "hashtags": {}, "searches": {}}, f)
+    else:
+        try:
+            with open(COOLDOWN_FILE, 'r', encoding='utf-8') as f:
+                json.load(f)
+        except json.JSONDecodeError:
+            with open(COOLDOWN_FILE, 'w', encoding='utf-8') as f:
+                json.dump({"titles": {}, "hashtags": {}, "searches": {}}, f)
 
 def check_history(url):
+    """Strictly ensures the exact URL does not exist in history.txt."""
+    if not os.path.exists(HISTORY_FILE):
+        return False
     with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-        return url.strip() in [line.strip() for line in f.readlines()]
+        history_urls = set(line.strip() for line in f.readlines() if line.strip())
+    return url.strip() in history_urls
 
 def update_file_record(url, file_path):
+    """Appends the URL to history tracking logs."""
     with open(file_path, 'a', encoding='utf-8') as f:
         f.write(f"{url.strip()}\n")
 
 def get_available_metadata(filepath, item_type):
+    """Fetches titles/hashtags/searches respecting the 30-day cooldown."""
     with open(COOLDOWN_FILE, 'r', encoding='utf-8') as f:
         cooldowns = json.load(f)
     
@@ -59,6 +74,7 @@ def get_available_metadata(filepath, item_type):
     return None
 
 def update_cooldown(item, item_type):
+    """Records the timestamp of the used metadata into history.json."""
     with open(COOLDOWN_FILE, 'r', encoding='utf-8') as f:
         cooldowns = json.load(f)
     
@@ -71,13 +87,12 @@ def update_cooldown(item, item_type):
         json.dump(cooldowns, f, indent=4)
 
 def fetch_pinterest_api(search_term):
-    """Parses the nested JSON structure to extract the direct image or video URL."""
+    """Fetches API and extracts the first unused media URL."""
     api_url = f"https://ansh-apis.is-dev.org/api/printrest?key=ansh&search={search_term}"
     try:
         response = requests.get(api_url)
         data = response.json()
         
-        # Navigate through the specific JSON structure provided
         pins = data.get("data", {}).get("pins", [])
         
         for pin in pins:
@@ -107,6 +122,7 @@ def get_headers():
     return {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 def upload_to_servers(file_path):
+    """Uploads the local file to multiple fallback servers sequentially."""
     filename = os.path.basename(file_path)
     servers = [
         ("Catbox", lambda: requests.post("https://catbox.moe/user/api.php", data={'reqtype': 'fileupload'}, files={'fileToUpload': open(file_path, 'rb')}, headers=get_headers(), timeout=60)),
@@ -143,6 +159,7 @@ def upload_to_servers(file_path):
     return None
 
 def send_to_webhook(title, hashtag, uploaded_url):
+    """Sends JSON payload to the Webhook URL."""
     if not WEBHOOK_URL:
         return False
     payload = {"title": title, "hashtag": hashtag, "media_url": uploaded_url}
@@ -155,6 +172,7 @@ def send_to_webhook(title, hashtag, uploaded_url):
         return False
 
 def send_telegram_message(token, text):
+    """Sends execution alerts to Telegram."""
     if not token or not TELEGRAM_CHAT_ID:
         return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -177,7 +195,7 @@ def main():
     target_url = fetch_pinterest_api(search_term)
 
     if not target_url:
-        msg = f"⚠️ **Automation Failed**\nNo valid or fresh media URL found for search term: '{search_term}'."
+        msg = f"⚠️ **Automation Failed**\nNo valid or fresh media URL found for search term: '{search_term}'. All available media might be in history.txt."
         send_telegram_message(TELEGRAM_TOKEN_FAIL, msg)
         return
         
@@ -185,7 +203,7 @@ def main():
     final_path = ""
     
     try:
-        # Check if URL is a direct image file to bypass yt-dlp
+        # Bypass yt-dlp for direct image links
         if target_url.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
             ext = target_url.split(".")[-1]
             final_path = f"{media_path_base}.{ext}"
@@ -193,7 +211,7 @@ def main():
             with open(final_path, 'wb') as handler:
                 handler.write(img_data)
         else:
-            # Use yt-dlp for video streams / m3u8 files
+            # Use yt-dlp for video files
             ydl_opts = {'outtmpl': media_path_base, 'format': 'best', 'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=True)
@@ -211,11 +229,12 @@ def main():
         success = send_to_webhook(title, hashtag, uploaded_direct_url)
         
         if success:
+            # Update cooldown limits
             update_cooldown(title, "titles")
             update_cooldown(hashtag, "hashtags")
             update_cooldown(search_term, "searches")
             
-            # Save the successful URL to history tracking
+            # Permanently block the original media URL from being reused
             update_file_record(target_url, HISTORY_FILE)
             update_file_record(target_url, SAVE_FILE)
                 
@@ -233,6 +252,7 @@ def main():
             send_telegram_message(TELEGRAM_TOKEN_FAIL, fail_msg)
             
     finally:
+        # Safely cleanup downloaded artifacts
         for f in os.listdir("."):
             if f.startswith(media_path_base):
                 os.remove(f)
