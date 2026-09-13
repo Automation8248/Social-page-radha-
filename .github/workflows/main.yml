@@ -39,7 +39,8 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
+          # Only adds existing required tracking files
           git add history.txt save.txt history.json
           
-          git commit -m "chore: Update tracking files [skip ci]" || echo "No changes to commit"
+          git commit -m "chore: Update tracking and JSON cooldown files [skip ci]" || echo "No changes to commit"
           git push
