@@ -71,7 +71,8 @@ def update_cooldown(item, item_type):
         json.dump(cooldowns, f, indent=4)
 
 def fetch_pinterest_api(search_term):
-    """Fetches API and automatically extracts the first unused direct link (ignores URLs already in history)."""
+    """Fetches the exact API URL requested by the user dynamically."""
+    # Yahan exactly aapka diya hua API hit ho raha hai
     api_url = f"https://ansh-apis.is-dev.org/api/printrest?key=ansh&search={search_term}"
     try:
         response = requests.get(api_url)
@@ -95,13 +96,11 @@ def fetch_pinterest_api(search_term):
                 
         # Handle API returning a dictionary
         elif isinstance(data, dict):
-            # If the dictionary contains a nested list (e.g., {"results": [...]})
             for key, value in data.items():
                 if isinstance(value, list):
                     for item in value:
                         url = extract_and_check(item)
                         if url: return url
-            # Fallback to flat dictionary
             return extract_and_check(data)
             
     except Exception as e:
@@ -203,7 +202,6 @@ def main():
         ydl_opts = {'outtmpl': video_path, 'format': 'best', 'quiet': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(target_url, download=True)
-            # Ensure correct file extension
             ext = info.get('ext', 'mp4')
             final_path = f"{video_path}.{ext}"
             os.rename(video_path, final_path)
@@ -220,7 +218,6 @@ def main():
         success = send_to_webhook(title, hashtag, uploaded_direct_url)
         
         if success:
-            # Update cooldowns and tracking files
             update_cooldown(title, "titles")
             update_cooldown(hashtag, "hashtags")
             update_cooldown(search_term, "searches")
@@ -242,7 +239,6 @@ def main():
             send_telegram_message(TELEGRAM_TOKEN_FAIL, fail_msg)
             
     finally:
-        # Cleanup any downloaded files
         for f in os.listdir("."):
             if f.startswith(video_path):
                 os.remove(f)
